@@ -1,0 +1,384 @@
+---
+title: "Assignment One"
+date: "`r Sys.Date()`"
+author: "550922090"
+format: 
+  html: 
+    embed-resources: true 
+    code-fold: true 
+    code-tools: true 
+table-of-contents: true 
+number-sections: true 
+execute: 
+  warning: false
+  message: false
+---
+
+## Introduction
+
+The DATA2x02 class survey collected responses from 373 students in DATA2002 and DATA2902 during 2025. Students provided information on study habits, lifestyle factors, and personal characteristics.
+
+The survey was voluntary and does not represent a random sample. With 373 responses out of 1187 enrolled students (31.4%), non-response bias is probable. Self-reported variables like study hours, alcohol consumption and WAM are also likely to have errors, and some free-response answers like water intake contained false or joke answers.
+
+This report investigates three connected questions under the theme of student wellness: whether exercise is linked to anxiety, whether study hours predict anxiety, and whether sleep schedule consistency is associated with academic performance.
+
+## Data Preparation
+
+The survey dataset had 373 responses across 52 questions. The raw Excel file was imported into R, and all data wrangling and cleaning occured within R. This guarantees that the entire process can be replicated by simply rendering the document. To improve code readability, the original column names were replaced with simpler names such as `pay_rent`, `work_status`, and `wam`. A full table with the new variable names is shown in Table 1.
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(gt)      
+library(janitor) 
+library(visdat)   
+library(stringr) 
+library(hms)       
+library(forcats)
+library(patchwork)
+```
+
+```{r}
+#| label: tbl-namecombo
+#| tbl-cap: "Mapping of original variable names to shortened names used in this report."
+
+df <- read_excel("DATA2x02_survey_2025_Responses.xlsx")
+old_names <- colnames(df)
+
+new_names <- c(
+  "timestamp",
+  "target_grade",
+  "assignment_preference",
+  "trimester_or_semester",
+  "age",
+  "tendency_yes_or_no",
+  "pay_rent",
+  "stall_choice",
+  "weetbix_count",
+  "weekly_food_spend",
+  "living_arrangements",
+  "weekly_alcohol",
+  "believe_in_aliens",
+  "height",
+  "commute",
+  "daily_anxiety_frequency",
+  "weekly_study_hours",
+  "work_status",
+  "social_media",
+  "gender",
+  "average_daily_sleep",
+  "usual_bedtime",
+  "sleep_schedule",
+  "sibling_count",
+  "allergy_count",
+  "diet_style",
+  "random_number",
+  "favourite_number",
+  "favourite_letter",
+  "drivers_license",
+  "relationship_status",
+  "daily_short_video_time",
+  "computer_os",
+  "steak_preference",
+  "dominant_hand",
+  "enrolled_unit",
+  "weekly_exercise_hours",
+  "weekly_paid_work_hours",
+  "assignments_on_time",
+  "used_r_before",
+  "team_role_type",
+  "university_year",
+  "favourite_anime",
+  "fluent_languages",
+  "readable_languages",
+  "country_of_birth",
+  "wam",
+  "shoe_size",
+  "books_read_highschool",
+  "daily_water_intake_l",
+  "perceived_old_age",
+  "study_music_preference"
+)
+
+colnames(df) <- new_names
+name_combo <- tibble(New = new_names, Old = old_names)
+
+name_combo |>
+  gt() |>
+  cols_label(New = "New Name", Old = "Original Column Name")
+```
+
+Before cleaning, the data set was examined for missing values (Figure 1). Several variables, like WAM and favourite anime, contained high levels of missing data. Missing responses were kept as `NA` instead of being removed, to avoid bias.
+
+```{r}
+#| label: fig-missingness
+#| fig-cap: "Visualisation of missing values across all survey variables"
+vis_miss(df) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+Many variables were cleaned before analysis. Anxiety scores were limited to numbers between 1 and 10, and WAM values were limited to 0–100. Study hours were set as below 100 per week to remove outliers. An exercise grouping variable was created based on a health guideline of 2.5 hours per week, and sleep schedule scores were divided into two categories. This ensures that only realistic and interpretable values are included in the hypothesis tests.
+
+```{r}
+df <- df |>
+  mutate(
+    anxiety_clean = if_else(
+      daily_anxiety_frequency < 1 | daily_anxiety_frequency > 10,
+      NA_real_, daily_anxiety_frequency
+    ),
+    
+    wam_clean = if_else(wam < 0 | wam > 100, NA_real_, wam),
+
+    weekly_study_hours_clean = if_else(weekly_study_hours > 100,
+                                       NA_real_, weekly_study_hours),
+    
+    weekly_exercise_hours_clean = if_else(weekly_exercise_hours < 0 | weekly_exercise_hours > 100, NA_real_, weekly_exercise_hours),
+
+    exercise_group = if_else(weekly_exercise_hours_clean >= 2.5,
+                             "Meets WHO guideline",
+                             "Below guideline"),
+    sleep_group = case_when(
+      sleep_schedule >= 7 ~ "Consistent",
+      sleep_schedule <= 4 ~ "Inconsistent",
+      TRUE ~ NA_character_
+    )
+  )
+```
+
+## Exploratory Analysis
+
+The table summarizes the variables of interest. Anxiety averaged mid-scale (5.4/10), WAM clustered around 74, weekly exercise hours averaged 5.1 after removing several outliers, and weekly study hours averaged 19 with several outliers on higher end of the scale.
+
+```{r}
+#| label: tbl-summary-numerics
+#| tbl-cap: "Summary statistics for key numeric variables."
+
+df |>
+  select(
+    anxiety_clean,
+    wam_clean,
+    weekly_study_hours_clean,
+    weekly_exercise_hours_clean
+  ) |>
+  pivot_longer(cols = everything(),
+               names_to = "Variable",
+               values_to = "Value") |>
+  group_by(Variable) |>
+  summarise(
+    n = sum(!is.na(Value)),
+    mean = mean(Value, na.rm = TRUE),
+    median = median(Value, na.rm = TRUE),
+    sd = sd(Value, na.rm = TRUE),
+    min = min(Value, na.rm = TRUE),
+    max = max(Value, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  gt() |>
+  fmt_number(columns = c(mean, median, sd), decimals = 1)
+```
+
+The figure below shows the distribution of these variables. Weekly exercise hours is left-skewed with several outliers, weekly study hours has a wide distribution with a notable mode of around 10, anxiety scores are spread across the scale, and WAM is fairly symmetric.
+
+```{r}
+#| label: fig-fuel-distributions
+#| fig-cap: "Distributions of variables used in analysis"
+
+p1 <- df |>
+  ggplot(aes(x = weekly_exercise_hours_clean)) +
+  geom_histogram(binwidth = 2, fill = "maroon", color = "white") +
+  labs(x = "Weekly exercise hours", y = "Count")
+
+p2 <- df |>
+  ggplot(aes(x = weekly_study_hours_clean)) +
+  geom_histogram(binwidth = 2, fill = "magenta", color = "white") +
+  labs(x = "Weekly study hours", y = "Count")
+
+p3 <- df |>
+  ggplot(aes(x = anxiety_clean)) +
+  geom_histogram(binwidth = 1, fill = "darkred", color = "white") +
+  scale_x_continuous(breaks = 1:10) +
+  labs(x = "Anxiety frequency (1–10)", y = "Count")
+
+p4 <- df |>
+  ggplot(aes(x = wam_clean)) +
+  geom_histogram(binwidth = 5, fill = "purple", color = "white") +
+  labs(x = "WAM", y = "Count")
+
+(p1 | p2) /
+(p3 | p4)
+```
+
+This figure demonstrates that anxiety shows a slight negative trend: students exercising more tend to report lower anxiety. These patterns motivate the formal hypothesis tests next in this report.
+
+```{r}
+df |>
+  ggplot(aes(x = weekly_exercise_hours, y = anxiety_clean)) +
+  geom_point(alpha = 0.6, color = "magenta") +
+  geom_smooth(method = "lm", se = TRUE, color = "maroon") +
+  labs(x = "Weekly exercise hours", y = "Anxiety frequency (1–10)")
+```
+
+The figures below show demographics: most survey responses were from students in their second and third year. This reflects the course demographics but also implies that there may be some limits in representation.
+
+```{r}
+df |>
+  mutate(university_year = fct_infreq(university_year)) |>
+  ggplot(aes(x = university_year)) +
+  geom_bar(fill = "maroon") +
+  labs(x = "Year of study", y = "Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Results
+
+## **Do students who exercise at least 2.5 hours per week (the WHO recommendation) report lower anxiety than those who don't?**
+
+```{r}
+#| label: fig-anxiety-assumptions
+#| fig-cap: "Assumptions for exercise vs anxiety comparison"
+
+df |> 
+  filter(!is.na(exercise_group), !is.na(anxiety_clean)) |>
+  ggplot(aes(x = anxiety_clean, fill = exercise_group)) +
+  geom_histogram(binwidth = 1, position = "dodge", color = "white") +
+  labs(x = "Anxiety (1–10)", y = "Count", fill = "Exercise group")
+
+df |> 
+  filter(!is.na(exercise_group), !is.na(anxiety_clean)) |>
+  ggplot(aes(sample = anxiety_clean, color = exercise_group)) +
+  stat_qq() + stat_qq_line() +
+  labs(x = "Theoretical", y = "Sample",
+       color = "Exercise group")
+```
+
+```{r}
+df |>
+  ggplot(aes(x = exercise_group, y = anxiety_clean, fill = exercise_group)) +
+  geom_boxplot() +
+  labs(x = "Exercise group", y = "Anxiety (1–10)") +
+  theme(legend.position="none")
+
+set.seed(1)
+Test_t <- t.test(anxiety_clean ~ exercise_group, data = df)
+Test_w <- wilcox.test(anxiety_clean ~ exercise_group, data = df)
+Test_t
+Test_w
+```
+
+-   **Hypotheses:** Let $\mu_{low}$ and $\mu_{high}$ be the mean anxiety scores for students below and above the guideline.
+
+    $H_0: \mu_{low} = \mu_{high}$ vs. $H_1: \mu_{low} > \mu_{high}$.
+
+-   **Assumptions:** Two independent groups, anxiety with a 1–10 scale, approximately symmetric within groups
+
+-   **Test statistic:** Welch's two-sample t-test
+
+-   **Observed test statistic:** $t_0 = 2.14$ with $148$ degrees of freedom.
+
+-   **p-value:** $p = 0.034$ The Wilcoxon test had $W = 14,040$, $p =0.036$.
+
+-   **Decision:** Since the p-value is less than 0.05, we can reject $H_0$. Students exercising $\geq 2.5$ hours/week had lower anxiety.
+
+## Is there a relationship between the number of hours students study per week and how often they report feeling anxious?
+
+```{r}
+#| label: fig-regression-diagnostics
+#| fig-cap: "Assumptions for regression of anxiety on study hours"
+#| fig-width: 8
+#| fig-height: 8
+
+par(mfrow = c(2,2))
+plot(model_study_anxiety)
+par(mfrow = c(1,1))
+```
+
+```{r}
+model_study_anxiety <- lm(anxiety_clean ~ weekly_study_hours, data = df)
+summary(model_study_anxiety)
+
+df |>
+  ggplot(aes(x = weekly_study_hours, y = anxiety_clean)) +
+  geom_point(alpha=0.6, color="maroon") +
+  geom_smooth(method="lm", se=TRUE, color="darkred") +
+  labs(x = "Weekly study hours", y = "Anxiety (1–10)")
+```
+
+1.  **Hypotheses:**\
+    $H_0: \beta_1 = 0$. Weekly study hours are not related to anxiety.\
+    $H_A: \beta_1 > 0$. More study hours increase anxiety.
+
+2.  **Assumptions:** Linearity, independent observations, approximately normal residuals.
+
+3.  **Test statistic:** Regression slope $\hat{\beta}_1$ tested with a t-statistic.
+
+4.  **Observed test statistic:** $\hat{\beta}_1 = 0.020$, $t_0 = 2.52$, df = 347.
+
+5.  **p-value:** $p = 0.012$. $R^2 = 0.018$.
+
+6.  **Decision:** Reject $H_0$. Students who studied more reported slightly higher anxiety, even though the effect was small ($\approx 0.2$ points for 10 extra hours).
+
+## Do students with consistent sleep schedules achieve higher WAMs than students with inconsistent sleep schedules?
+
+```{r}
+df |>
+  mutate(sleep_group = case_when(
+    sleep_schedule >= 7 ~ "Consistent",
+    sleep_schedule <= 4 ~ "Inconsistent"
+  )) |>
+  filter(!is.na(sleep_group), !is.na(wam_clean)) |>
+  ggplot(aes(x = sleep_group, y = wam_clean, fill = sleep_group)) +
+  geom_boxplot() +
+  labs(x = "Sleep group", y = "WAM") +
+  theme(legend.position="none")
+```
+
+```{r}
+set.seed(1)
+sleep_df <- df |> filter(!is.na(sleep_schedule), !is.na(wam_clean))
+
+obs_diff <- with(sleep_df,
+  mean(wam_clean[sleep_schedule >= 7], na.rm=TRUE) -
+  mean(wam_clean[sleep_schedule <= 4], na.rm=TRUE))
+
+perm_diffs <- replicate(10000, {
+  shuffled <- sample(sleep_df$sleep_schedule)
+  mean(sleep_df$wam_clean[shuffled >= 7], na.rm=TRUE) -
+    mean(sleep_df$wam_clean[shuffled <= 4], na.rm=TRUE)
+})
+
+p_value <- mean(perm_diffs >= obs_diff)
+obs_diff; p_value
+```
+
+1.  **Hypotheses:**\
+    $H_0$: Mean WAM is equal for consistent and inconsistent sleepers.\
+    $H_A$: Consistent sleepers have higher mean WAM.
+
+2.  **Assumptions:** Independent observations. Permutation test requires no distributional assumptions.
+
+3.  **Test statistic:** Observed mean difference in WAM.
+
+4.  **Observed test statistic:** $\Delta = 1.88$.
+
+5.  **p-value:** $p = 0.184$ from 10,000 permutations.
+
+6.  **Decision:** Do not reject $H_0$. Consistent sleepers had slightly higher WAM,\
+    but the difference was not statistically significant.
+
+## Conclusion
+
+This study analyzed survey responses from DATA2002 students to explore how lifestyle factors such as diet, exercise, hydration, and sleep relate to wellbeing and academic performance.
+
+I found that students exercising ≥2.5 hours per week reported slightly lower anxiety (≈0.6 points), while heavier study loads were tied to higher anxiety (≈0.2 points per 10 extra hours). Sleep consistency showed only a small, non-significant difference in WAM (≈1.9 marks).
+
+In conclusion, exercise and workload balance seem to matter for stress, but the connection between lifestyle and academic performance is less obvious. A larger and differently designed study could further investigate this idea, especially with more reliable measures of sleep/study other than self-reporting.
+
+# References
+
+-   Wickham, H., et al. (2019). *Welcome to the tidyverse*. *Journal of Open Source Software*, 4(43), 1686. <https://doi.org/10.21105/joss.01686>
+-   World Health Organization. *WHO Guidelines on Physical Activity and Sedentary Behaviour*. Geneva: World Health Organization; 2020. ISBN 978-92-4-001488-6.
+
+<!-- -->
+
+-   R Core Team (2024). *R: A language and environment for statistical computing*. <https://www.R-project.org/>
+-   Allaire, J. J., et al. (2022). *Quarto*. <https://doi.org/10.5281/zenodo.5960048>
